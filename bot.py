@@ -67,6 +67,38 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = get_user(uid)
 
+    # 🔥 TELEFON FIX (BURAYA)
+if user.get("state") == "telefon":
+    if not text.isdigit() or len(text) < 10:
+        await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
+        return
+
+    user["telefon"] = text
+    user["state"] = None
+
+    total = sum(MENU[i] for i in user["cart"])
+
+    msg = f"""
+📦 Sipariş
+
+👤 {user['isim']}
+📞 {user['telefon']}
+🛒 {', '.join(user['cart'])}
+💰 {total} TL
+📍 {user['adres']}
+💳 {user['odeme']}
+"""
+
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+
+    await update.message.reply_text(
+        "🎉 Siparişin alındı! Hazırlanıyor 👨‍🍳",
+        reply_markup=main_menu()
+    )
+
+    users[uid] = {}
+    return
+    
     # 🔥 STATE ÖNCELİĞİ (EN KRİTİK)
     if user["state"] == "adres":
         user["adres"] = text
