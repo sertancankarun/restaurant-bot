@@ -7,16 +7,11 @@ import random
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-OPEN = 10
-CLOSE = 23
-
-CAMPAIGN_ACTIVE = False  # 🔥 kampanya aç kapa
-
 MENU = {
-    "🍕 Pizza": 150,
-    "🍔 Burger": 120,
-    "🥤 Kola": 40,
-    "🥛 Ayran": 30
+    "Pizza": 150,
+    "Burger": 120,
+    "Kola": 40,
+    "Ayran": 30
 }
 
 users = {}
@@ -34,31 +29,22 @@ def get_user(uid):
     return users[uid]
 
 def main_menu():
-    buttons = [
+    return ReplyKeyboardMarkup([
         ["🍔 Menü", "🛒 Sepet"],
         ["📍 Adres", "💳 Ödeme"],
         ["✅ Onayla", "❌ İptal"]
-    ]
-    if CAMPAIGN_ACTIVE:
-        buttons.insert(0, ["🔥 Kampanya"])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    ], resize_keyboard=True)
 
 def menu_buttons():
-    return ReplyKeyboardMarkup(
-        [["🍕 Pizza", "🍔 Burger"],
-         ["🥤 Kola", "🥛 Ayran"],
-         ["🔙 Geri"]],
-        resize_keyboard=True
-    )
+    return ReplyKeyboardMarkup([
+        ["Pizza", "Burger"],
+        ["Ayran", "Kola"],
+        ["🔙 Geri"]
+    ], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now().hour
-    if now < OPEN or now >= CLOSE:
-        await update.message.reply_text("🚫 Şu an kapalıyız")
-        return
-
     await update.message.reply_text(
-        "👋 Hoş geldin!\n\n🍽 Sipariş vermek için menüyü kullan 👇",
+        "👋 Hoş geldin!\nSipariş için menüyü kullan 👇",
         reply_markup=main_menu()
     )
 
@@ -74,7 +60,6 @@ def cart_text(user):
     text += f"\n💰 Toplam: {total} TL\n"
     text += f"📍 Adres: {user['adres'] or 'Yok'}\n"
     text += f"💳 Ödeme: {user['odeme'] or 'Yok'}"
-
     return text
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,7 +67,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = get_user(uid)
 
-    # 🔥 ADRES YAZMA FIX
+    # 🔥 ADRES FIX
     if user["state"] == "adres":
         user["adres"] = text
         user["state"] = None
@@ -103,48 +88,78 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user["state"] == "telefon":
         user["telefon"] = text
         user["state"] = None
-        await update.message.reply_text("✅ Bilgiler alındı", reply_markup=main_menu())
+
+        # ✅ SİPARİŞ TAMAMLANDI
+        total = sum(MENU[i] for i in user["cart"])
+
+        msg = f"""
+📦 Sipariş Alındı!
+
+👤 {user['isim']}
+📞 {user['telefon']}
+
+🛒 {', '.join(user['cart'])}
+💰 {total} TL
+📍 {user['adres']}
+💳 {user['odeme']}
+"""
+
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+
+        await update.message.reply_text(
+            "🎉 Siparişin alındı! Hazırlanıyor 👨‍🍳",
+            reply_markup=main_menu()
+        )
+
+        users[uid] = {}
         return
 
+    # 🔥 MENÜ
     if text == "🍔 Menü":
         await update.message.reply_text("👇 Ürün seç:", reply_markup=menu_buttons())
         return
 
+    # 🔥 ÜRÜN SEÇİMİ (FIX)
     if text in MENU:
         user["cart"].append(text)
 
-        cevaplar = [
-            f"{text} sepete eklendi 🔥",
-            f"Harika seçim! {text} 👌",
-            f"{text} eklendi, devam edelim 😎"
-        ]
+        fiyat = MENU[text]
+        total = sum(MENU[i] for i in user["cart"])
 
-        await update.message.reply_text(random.choice(cevaplar))
+        await update.message.reply_text(
+            f"✅ {text} eklendi\n💰 {fiyat} TL\n\n🧾 Toplam: {total} TL"
+        )
         return
 
+    # 🔥 SEPET
     if text == "🛒 Sepet":
         await update.message.reply_text(cart_text(user), reply_markup=main_menu())
         return
 
+    # 🔥 ADRES
     if text == "📍 Adres":
         user["state"] = "adres"
         await update.message.reply_text("📍 Adresini yaz:")
         return
 
+    # 🔥 ÖDEME
     if text == "💳 Ödeme":
         user["odeme"] = "Nakit"
-        await update.message.reply_text("💳 Ödeme: Nakit seçildi ✅")
+        await update.message.reply_text("💳 Nakit seçildi ✅")
         return
 
+    # 🔥 GERİ FIX
     if text == "🔙 Geri":
         await update.message.reply_text("🔙 Ana menü", reply_markup=main_menu())
         return
 
+    # 🔥 İPTAL
     if text == "❌ İptal":
         users[uid] = {}
-        await update.message.reply_text("❌ Sipariş iptal edildi", reply_markup=main_menu())
+        await update.message.reply_text("❌ İptal edildi", reply_markup=main_menu())
         return
 
+    # 🔥 ONAYLA FIX
     if text == "✅ Onayla":
         if not user["cart"]:
             await update.message.reply_text("🛒 Sepet boş")
@@ -163,25 +178,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("👤 İsmini yaz:")
         return
 
-    # 🔥 ANLAYAMADIM FIX (SADECE GEREKSİZ MESAJLARDA)
+    # 🔥 BOŞTAKİ MESAJLAR
     await update.message.reply_text(
-        "👇 Menüden seçim yapabilirsin",
+        "👇 Menüden seçim yap",
         reply_markup=main_menu()
     )
-
-async def main_admin_notify(app, uid, user):
-    order_id = random.randint(1000, 9999)
-    text = f"""📦 Sipariş #{order_id}
-
-👤 {user['isim']}
-📞 {user['telefon']}
-
-🛒 {', '.join(user['cart'])}
-💰 {sum(MENU[i] for i in user['cart'])} TL
-📍 {user['adres']}
-"""
-
-    await app.bot.send_message(chat_id=ADMIN_ID, text=text)
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
