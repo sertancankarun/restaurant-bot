@@ -2,6 +2,9 @@ import os
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+orders = {}
+order_counter = 1000
+
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
@@ -92,11 +95,62 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📞 Telefon numaranı yaz:")
         return
 
-    if user["state"] == "telefon":
-        if not text.isdigit() or len(text) < 10:
-            await update.message.reply_text("📞 Geçerli numara yaz")
-            return
+        if user["state"] == "telefon":
+    global order_counter
 
+    if not text.isdigit() or len(text) < 10:
+        await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
+        return
+
+    user["telefon"] = text
+    user["state"] = None
+
+    order_counter += 1
+    order_id = order_counter
+
+    orders[order_id] = {
+        "user_id": uid,
+        "status": "Hazırlanıyor",
+        "data": user.copy()
+    }
+    }
+
+    total = sum(MENU[i] for i in user["cart"])
+
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    buttons = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👨‍🍳 Hazırlanıyor", callback_data=f"hazir_{order_id}"),
+            InlineKeyboardButton("🚗 Yolda", callback_data=f"yolda_{order_id}")
+        ],
+        [
+            InlineKeyboardButton("✅ Teslim", callback_data=f"teslim_{order_id}")
+        ]
+    ])
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"""
+📦 Sipariş #{order_id}
+
+👤 {user['isim']}
+📞 {user['telefon']}
+🛒 {', '.join(user['cart'])}
+💰 {total} TL
+📍 {user['adres']}
+💳 {user['odeme']}
+""",
+        reply_markup=buttons
+    )
+
+    await update.message.reply_text(
+        f"🎉 Siparişin alındı!\n📦 Sipariş No: {order_id}",
+        reply_markup=main_menu()
+    )
+
+    users.pop(uid, None)
+    return
         user["telefon"] = text
         user["state"] = None
 
