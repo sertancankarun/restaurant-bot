@@ -1,16 +1,21 @@
 import os
+import random
 from datetime import datetime
 
 import openpyxl
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Railway varsa oradan alır, yoksa PC testi için alttaki değerleri kullanır
+# Railway varsa oradan alır, PC testi için fallback vardır
 TOKEN = os.getenv("TOKEN") or "BURAYA_TOKEN"
 ADMIN_ID = int(os.getenv("ADMIN_ID") or "6741548158")
 
 FILE_NAME = "orders.xlsx"
 RESTAURANT_NAME = "Getiriyosun Bot"
+
+# Çalışma saatleri
+OPEN_HOUR = 10
+CLOSE_HOUR = 23
 
 MENU_ITEMS = {
     "pizza": 150,
@@ -19,9 +24,21 @@ MENU_ITEMS = {
     "kola": 40,
 }
 
+COMBOS = {
+    "⚡ Menü 1": ["pizza", "ayran"],
+    "⚡ Menü 2": ["burger", "kola"],
+}
+
 UPSELL = {
     "pizza": "ayran",
     "burger": "kola",
+}
+
+EMOJI = {
+    "pizza": "🍕",
+    "burger": "🍔",
+    "ayran": "🥛",
+    "kola": "🥤",
 }
 
 users = {}
@@ -30,10 +47,11 @@ users = {}
 
 ANA_MENU = ReplyKeyboardMarkup(
     [
-        ["🍔 Menü", "⚡ Hızlı Menü"],
-        ["🛒 Sepet", "📍 Adres"],
-        ["💳 Ödeme", "✅ Onay"],
-        ["❌ İptal"],
+        ["🍔 Menü", "⚡ Menü 1"],
+        ["⚡ Menü 2", "🛒 Sepet"],
+        ["📍 Adres", "💳 Ödeme"],
+        ["🔁 Tekrar Sipariş", "🗑️ Son Ürünü Sil"],
+        ["✅ Onay", "❌ İptal"],
     ],
     resize_keyboard=True
 )
@@ -42,7 +60,7 @@ URUN_MENU = ReplyKeyboardMarkup(
     [
         ["Pizza", "Burger"],
         ["Ayran", "Kola"],
-        ["⬅️ Geri", "🛒 Sepet"],
+        ["🛒 Sepet", "⬅️ Geri"],
     ],
     resize_keyboard=True
 )
@@ -58,7 +76,7 @@ ODEME_MENU = ReplyKeyboardMarkup(
 ONAY_MENU = ReplyKeyboardMarkup(
     [
         ["✅ Onayla", "❌ İptal"],
-        ["⬅️ Geri", "🛒 Sepet"],
+        ["🛒 Sepet", "⬅️ Geri"],
     ],
     resize_keyboard=True
 )
@@ -72,11 +90,19 @@ def init_excel():
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Orders"
-        ws.append(["Tarih", "Saat", "Ürünler", "Toplam", "Adres", "Ödeme"])
+        ws.append([
+            "Sipariş No",
+            "Tarih",
+            "Saat",
+            "Ürünler",
+            "Toplam",
+            "Adres",
+            "Ödeme"
+        ])
         wb.save(FILE_NAME)
 
 
-def save_order(cart, address, payment):
+def save_order(order_id, cart, address, payment):
     wb = openpyxl.load_workbook(FILE_NAME)
     ws = wb.active
 
@@ -84,6 +110,7 @@ def save_order(cart, address, payment):
     now = datetime.now()
 
     ws.append([
+        order_id,
         now.strftime("%Y-%m-%d"),
         now.strftime("%H:%M"),
         ", ".join(cart),
@@ -103,17 +130,21 @@ def get_user(user_id):
             "address": None,
             "payment": None,
             "waiting_address": False,
+            "last_order": [],
         }
     return users[user_id]
 
 
-def reset_user(user_id, keep_address=True):
+def reset_user(user_id, keep_address=True, keep_last_order=True):
     old_address = users[user_id]["address"] if user_id in users and keep_address else None
+    old_last_order = users[user_id]["last_order"] if user_id in users and keep_last_order else []
+
     users[user_id] = {
         "cart": [],
         "address": old_address,
         "payment": None,
         "waiting_address": False,
+        "last_order": old_last_order,
     }
 
 
@@ -127,11 +158,11 @@ def format_cart(user):
 
     lines = []
     total = 0
+
     for item in user["cart"]:
         price = MENU_ITEMS[item]
         total += price
-        emoji = "🍕" if item == "pizza" else "🍔" if item == "burger" else "🥤" if item == "kola" else "🥛"
-        lines.append(f"{emoji} {item.capitalize()} - {price} TL")
+        lines.append(f"{EMOJI[item]} {item.capitalize()} - {price} TL")
 
     address = user["address"] if user["address"] else "Girilmedi"
     payment = user["payment"].capitalize() if user["payment"] else "Seçilmedi"
@@ -144,6 +175,15 @@ def format_cart(user):
         + f"\n💳 Ödeme: {payment}"
     )
 
+
+def is_open_now():
+    hour = datetime.now().hour
+    return OPEN_HOUR <= hour < CLOSE_HOUR
+
+
+def make_order_id():
+    return random.randint(1000, 9999)
+
 # ---------------- BOT ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,16 +191,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "Dostum"
     user = get_user(user_id)
 
+    status_text = (
+        f"🟢 Şu an açığız ({OPEN_HOUR}:00 - {CLOSE_HOUR}:00)"
+        if is_open_now()
+        else f"🔴 Şu an kapalıyız ({OPEN_HOUR}:00 - {CLOSE_HOUR}:00)"
+    )
+
     if user["address"]:
         msg = (
             f"🍔 {RESTAURANT_NAME}\n\n"
             f"Tekrar hoş geldin {name} 😄\n"
+            f"{status_text}\n\n"
             "Sipariş vermek için aşağıdaki menüyü kullanabilirsin."
         )
     else:
         msg = (
             f"🍔 {RESTAURANT_NAME}\n\n"
             f"Hoş geldin {name} 👋\n"
+            f"{status_text}\n\n"
             "Sipariş vermek için aşağıdaki menüyü kullanabilirsin."
         )
 
@@ -194,9 +242,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # İptal
     if "iptal" in text:
-        reset_user(user_id, keep_address=True)
+        reset_user(user_id, keep_address=True, keep_last_order=True)
         await update.message.reply_text(
-            "Sipariş iptal edildi ❌\nYeni sipariş için menüyü kullanabilirsin.",
+            "Sipariş iptal edildi ❌\nİstersen yeni sipariş oluşturabilirsin.",
             reply_markup=ANA_MENU
         )
         return
@@ -209,13 +257,52 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Hızlı Menü
-    if "hızlı menü" in text or "hizli menü" in text or "hizli menu" in text:
-        user["cart"].append("pizza")
-        user["cart"].append("ayran")
-
+    # Combo 1
+    if "menü 1" in text:
+        user["cart"].extend(COMBOS["⚡ Menü 1"])
         await update.message.reply_text(
-            "⚡ Hızlı Menü sepete eklendi!\n\n🍕 Pizza + 🥛 Ayran",
+            "⚡ Menü 1 sepete eklendi!\n\n🍕 Pizza + 🥛 Ayran",
+            reply_markup=ANA_MENU
+        )
+        return
+
+    # Combo 2
+    if "menü 2" in text:
+        user["cart"].extend(COMBOS["⚡ Menü 2"])
+        await update.message.reply_text(
+            "⚡ Menü 2 sepete eklendi!\n\n🍔 Burger + 🥤 Kola",
+            reply_markup=ANA_MENU
+        )
+        return
+
+    # Tekrar sipariş
+    if "tekrar sipariş" in text:
+        if not user["last_order"]:
+            await update.message.reply_text(
+                "Henüz tekrar edilecek bir siparişin yok 😕",
+                reply_markup=ANA_MENU
+            )
+            return
+
+        user["cart"].extend(user["last_order"])
+        await update.message.reply_text(
+            "🔁 Son siparişin tekrar sepete eklendi!",
+            reply_markup=ANA_MENU
+        )
+        return
+
+    # Son ürünü sil
+    if "son ürünü sil" in text:
+        if not user["cart"]:
+            await update.message.reply_text(
+                "Silinecek ürün yok. Sepetin boş 😕",
+                reply_markup=ANA_MENU
+            )
+            return
+
+        last_item = user["cart"].pop()
+        await update.message.reply_text(
+            f"🗑️ Son ürün kaldırıldı: {last_item.capitalize()}",
             reply_markup=ANA_MENU
         )
         return
@@ -229,7 +316,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             extra = f"\nYanına {UPSELL[text].capitalize()} ister misin? 😉"
 
         await update.message.reply_text(
-            f"🛒 {text.capitalize()} sepete eklendi!{extra}",
+            f"🛒 {EMOJI[text]} {text.capitalize()} sepete eklendi!{extra}",
             reply_markup=URUN_MENU
         )
         return
@@ -277,6 +364,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Asıl onay
     if "onayla" in text:
+        if not is_open_now():
+            await update.message.reply_text(
+                f"🔴 Şu an kapalıyız.\nÇalışma saatleri: {OPEN_HOUR}:00 - {CLOSE_HOUR}:00",
+                reply_markup=ANA_MENU
+            )
+            return
+
         if not user["cart"]:
             await update.message.reply_text(
                 "Sepetin boş ❌\nÖnce ürün seçmelisin.",
@@ -294,16 +388,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not user["payment"]:
             await update.message.reply_text(
-                "Ödeme seçmeden siparişi tamamlayamazsın ❌\nLütfen ödeme seç.",
+                "❌ Ödeme yöntemi seçmedin.\n\nLütfen aşağıdan seç 👇",
                 reply_markup=ODEME_MENU
             )
             return
 
         total = cart_total(user)
         items_text = ", ".join(item.capitalize() for item in user["cart"])
+        order_id = make_order_id()
 
         admin_msg = (
             f"🚨 YENİ SİPARİŞ - {RESTAURANT_NAME}\n\n"
+            f"🧾 Sipariş No: #{order_id}\n"
             f"🛒 Ürünler: {items_text}\n"
             f"💰 Toplam: {total} TL\n"
             f"📍 Adres: {user['address']}\n"
@@ -312,17 +408,21 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg)
-        save_order(user["cart"], user["address"], user["payment"])
+        save_order(order_id, user["cart"], user["address"], user["payment"])
+
+        # Son siparişi kaydet
+        user["last_order"] = list(user["cart"])
 
         await update.message.reply_text(
-            "🎉 Siparişin alındı!\n\n"
-            "⏱ Ortalama teslim süresi: 20-30 dk\n"
-            "📞 Gerekirse seninle iletişime geçebiliriz.\n\n"
+            f"🎉 Siparişin alındı!\n\n"
+            f"🧾 Sipariş numaran: #{order_id}\n"
+            f"⏱ Ortalama teslim süresi: 20-30 dk\n"
+            f"📞 Gerekirse seninle iletişime geçebiliriz.\n\n"
             "Teşekkür ederiz ❤️",
             reply_markup=ANA_MENU
         )
 
-        reset_user(user_id, keep_address=True)
+        reset_user(user_id, keep_address=True, keep_last_order=True)
         return
 
     # Fallback
