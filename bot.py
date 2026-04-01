@@ -1,6 +1,6 @@
 import os
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 orders = {}
 order_counter = 1000
@@ -249,11 +249,44 @@ f"""🛒 Sepet:
 
     await update.message.reply_text("⚠️ Menüden seçim yap", reply_markup=main_menu())
 
+async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    action, order_id = data.split("_")
+    order_id = int(order_id)
+
+    order = orders.get(order_id)
+    if not order:
+        return
+
+    user_id = order["user_id"]
+
+    if action == "hazir":
+        status = "👨‍🍳 Hazırlanıyor"
+    elif action == "yolda":
+        status = "🚗 Yolda"
+    else:
+        status = "✅ Teslim edildi"
+
+    order["status"] = status
+
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=f"📦 Siparişin güncellendi:\n{status}"
+    )
+
+    await query.edit_message_text(
+        text=f"📦 Sipariş #{order_id}\nDurum: {status}"
+    )
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle))
+    app.add_handler(CallbackQueryHandler(admin_buttons))
 
     print("Bot çalışıyor...")
     app.run_polling()
