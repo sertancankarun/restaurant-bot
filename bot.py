@@ -2,11 +2,24 @@ import os
 import random
 from datetime import datetime
 
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import (
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    Update
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
 
 TOKEN = os.getenv("TOKEN") or "BURAYA_TOKEN"
-ADMIN_ID = int(os.getenv("ADMIN_ID") or "6741548158")
+ADMIN_ID = int(os.getenv("ADMIN_ID") or "BURAYA_ADMIN_ID")
 
 MENU_ITEMS = {
     "pizza": 150,
@@ -22,6 +35,7 @@ ANA_MENU = ReplyKeyboardMarkup(
     [
         ["🍔 Menü", "🛒 Sepet"],
         ["📍 Adres", "💳 Ödeme"],
+        ["🔁 Tekrar Sipariş", "🗑️ Son Ürünü Sil"],
         ["✅ Onay", "❌ İptal"],
     ],
     resize_keyboard=True
@@ -44,19 +58,20 @@ ODEME_MENU = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-def get_user(user_id):
-    if user_id not in users:
-        users[user_id] = {
+def get_user(uid):
+    if uid not in users:
+        users[uid] = {
             "cart": [],
             "address": None,
             "payment": None,
             "name": None,
             "phone": None,
-            "waiting_address": False,
             "waiting_name": False,
             "waiting_phone": False,
+            "waiting_address": False,
+            "last_order": []
         }
-    return users[user_id]
+    return users[uid]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -65,11 +80,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    uid = update.effective_user.id
     text = update.message.text.lower()
     raw = update.message.text
 
-    user = get_user(user_id)
+    user = get_user(uid)
 
     # isim
     if user["waiting_name"]:
@@ -83,8 +98,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user["waiting_phone"]:
         user["phone"] = raw
         user["waiting_phone"] = False
-        await update.message.reply_text("📍 Adresini gir:")
         user["waiting_address"] = True
+        await update.message.reply_text("📍 Adresini yaz:")
         return
 
     # adres
@@ -111,7 +126,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user["cart"]:
             await update.message.reply_text("Sepet boş")
             return
-
         total = sum(MENU_ITEMS[i] for i in user["cart"])
         await update.message.reply_text(
             f"{', '.join(user['cart'])}\nToplam: {total} TL"
@@ -157,53 +171,60 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         order_id = random.randint(1000, 9999)
-        orders[order_id] = user_id
+        orders[order_id] = uid
 
         total = sum(MENU_ITEMS[i] for i in user["cart"])
 
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🍳 Hazırlanıyor", callback_data=f"prep_{order_id}"),
+                InlineKeyboardButton("🚗 Yolda", callback_data=f"road_{order_id}")
+            ],
+            [
+                InlineKeyboardButton("✅ Teslim", callback_data=f"done_{order_id}")
+            ]
+        ])
+
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"🧾 {order_id}\n{user['name']} - {user['phone']}\n{', '.join(user['cart'])}\n{total} TL\n{user['address']}"
+            text=f"🧾 Sipariş #{order_id}\n👤 {user['name']} - {user['phone']}\n🛒 {', '.join(user['cart'])}\n💰 {total} TL\n📍 {user['address']}",
+            reply_markup=keyboard
         )
 
-        await update.message.reply_text(
-            f"✅ Sipariş alındı\nNumara: {order_id}"
-        )
+        await update.message.reply_text(f"✅ Sipariş alındı\nNumara: {order_id}")
 
-        users[user_id]["cart"] = []
+        user["last_order"] = list(user["cart"])
+        user["cart"] = []
         return
 
-# ADMIN KOMUTLARI
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-async def hazirlaniyor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    order_id = int(context.args[0])
+    data = query.data
+    order_id = int(data.split("_")[1])
     user_id = orders.get(order_id)
 
-    if user_id:
-        await context.bot.send_message(user_id, "🍳 Siparişin hazırlanıyor!")
+    if not user_id:
+        return
 
-async def yolda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    order_id = int(context.args[0])
-    user_id = orders.get(order_id)
+    if data.startswith("prep"):
+        msg = "🍳 Siparişin hazırlanıyor!"
+    elif data.startswith("road"):
+        msg = "🚗 Siparişin yolda!"
+    elif data.startswith("done"):
+        msg = "✅ Sipariş teslim edildi!"
+    else:
+        return
 
-    if user_id:
-        await context.bot.send_message(user_id, "🚗 Siparişin yolda!")
-
-async def teslim(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    order_id = int(context.args[0])
-    user_id = orders.get(order_id)
-
-    if user_id:
-        await context.bot.send_message(user_id, "✅ Sipariş teslim edildi!")
+    await context.bot.send_message(chat_id=user_id, text=msg)
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("hazirlaniyor", hazirlaniyor))
-    app.add_handler(CommandHandler("yolda", yolda))
-    app.add_handler(CommandHandler("teslim", teslim))
     app.add_handler(MessageHandler(filters.TEXT, handle))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     app.run_polling()
 
