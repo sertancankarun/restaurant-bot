@@ -40,11 +40,17 @@ def menu_buttons():
         ["🔙 Geri"]
     ], resize_keyboard=True)
 
-# 🔥 START (İSİM EKLENDİ)
+def payment_menu():
+    return ReplyKeyboardMarkup([
+        ["💵 Nakit", "💳 Kapıda Kart"],
+        ["🏦 IBAN"],
+        ["🔙 Geri"]
+    ], resize_keyboard=True)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name
     await update.message.reply_text(
-        f"👋 Hoş geldin {name}!\n\n🍽 Sipariş vermek için menüyü kullan 👇",
+        f"👋 Hoş geldin {name}!\nSipariş vermek için menüyü kullan 👇",
         reply_markup=main_menu()
     )
 
@@ -67,86 +73,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = get_user(uid)
 
-    # 🔥 TELEFON FIX (BURAYA)
-if user.get("state") == "telefon":
-    if not text.isdigit() or len(text) < 10:
-        await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
-        return
+    # 🔥 STATE BLOKLARI (EN ÜST)
 
-    user["telefon"] = text
-    user["state"] = None
+    if user["state"] == "telefon":
+        if not text.isdigit() or len(text) < 10:
+            await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
+            return
 
-    total = sum(MENU[i] for i in user["cart"])
-
-    msg = f"""
-📦 Sipariş
-
-👤 {user['isim']}
-📞 {user['telefon']}
-🛒 {', '.join(user['cart'])}
-💰 {total} TL
-📍 {user['adres']}
-💳 {user['odeme']}
-"""
-
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
-
-    await update.message.reply_text(
-        "🎉 Siparişin alındı! Hazırlanıyor 👨‍🍳",
-        reply_markup=main_menu()
-    )
-
-    users[uid] = {}
-    return
-    
-    # 🔥 STATE ÖNCELİĞİ (EN KRİTİK)
-    if user["state"] == "adres":
-        user["adres"] = text
-        user["state"] = None
-        await update.message.reply_text(
-            f"📍 Adres kaydedildi ✅\n🏠 {text}",
-            reply_markup=main_menu()
-        )
-        return
-
-    if user["state"] == "isim":
-        user["isim"] = text
-        user["state"] = "telefon"
-        await update.message.reply_text("📞 Telefon numaranı yaz:")
-        return
-
-   # 🔥 TELEFON (ULTRA FIX)
-if user.get("state") == "telefon":
-    # basit doğrulama
-    if not text.isdigit() or len(text) < 10:
-        await update.message.reply_text("📞 Geçerli bir numara yaz (sadece rakam)")
-        return
-
-    user["telefon"] = text
-    user["state"] = None
-
-    total = sum(MENU[i] for i in user["cart"])
-
-    msg = f"""
-📦 Sipariş
-
-👤 {user['isim']}
-📞 {user['telefon']}
-🛒 {', '.join(user['cart'])}
-💰 {total} TL
-📍 {user['adres']}
-💳 {user['odeme']}
-"""
-
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
-
-    await update.message.reply_text(
-        "🎉 Siparişin alındı! Hazırlanıyor 👨‍🍳",
-        reply_markup=main_menu()
-    )
-
-    users[uid] = {}
-    return
         user["telefon"] = text
         user["state"] = None
 
@@ -166,11 +99,26 @@ if user.get("state") == "telefon":
         await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
 
         await update.message.reply_text(
-            "🎉 Sipariş alındı! Hazırlanıyor 👨‍🍳",
+            "🎉 Siparişin alındı! Hazırlanıyor 👨‍🍳",
             reply_markup=main_menu()
         )
 
         users[uid] = {}
+        return
+
+    if user["state"] == "isim":
+        user["isim"] = text
+        user["state"] = "telefon"
+        await update.message.reply_text("📞 Telefon numaranı yaz:")
+        return
+
+    if user["state"] == "adres":
+        user["adres"] = text
+        user["state"] = None
+        await update.message.reply_text(
+            f"📍 Adres kaydedildi ✅\n🏠 {text}",
+            reply_markup=main_menu()
+        )
         return
 
     # 🔥 MENÜ
@@ -178,10 +126,9 @@ if user.get("state") == "telefon":
         await update.message.reply_text("👇 Ürün seç:", reply_markup=menu_buttons())
         return
 
-    # 🔥 ÜRÜN SEÇİMİ (STATE SONRASI!)
+    # 🔥 ÜRÜN
     if text in MENU:
         user["cart"].append(text)
-
         fiyat = MENU[text]
         total = sum(MENU[i] for i in user["cart"])
 
@@ -201,10 +148,15 @@ if user.get("state") == "telefon":
         await update.message.reply_text("📍 Adresini yaz:")
         return
 
-    # 🔥 ÖDEME
+    # 🔥 ÖDEME MENÜ
     if text == "💳 Ödeme":
-        user["odeme"] = "Nakit"
-        await update.message.reply_text("💳 Nakit seçildi ✅")
+        await update.message.reply_text("💳 Ödeme yöntemi seç:", reply_markup=payment_menu())
+        return
+
+    # 🔥 ÖDEME SEÇİMİ
+    if text in ["💵 Nakit", "💳 Kapıda Kart", "🏦 IBAN"]:
+        user["odeme"] = text
+        await update.message.reply_text(f"{text} seçildi ✅", reply_markup=main_menu())
         return
 
     # 🔥 GERİ
@@ -238,7 +190,7 @@ if user.get("state") == "telefon":
         return
 
     # 🔥 DEFAULT
-    await update.message.reply_text("👇 Menüden devam edebilirsin", reply_markup=main_menu())
+    await update.message.reply_text("👇 Menüden seçim yap", reply_markup=main_menu())
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
