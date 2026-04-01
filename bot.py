@@ -296,7 +296,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 
-async def main():
+def main():
     init_excel()
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -308,5 +308,4 @@ async def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
