@@ -179,22 +179,28 @@ if user.get("state") == "adres":
 
     # 🔥 ONAY
     if text == "✅ Onayla":
-        if not user["cart"]:
-            await update.message.reply_text("🛒 Sepet boş")
-            return
+   if text == "✅ Onayla":
 
-        if not user["adres"]:
-            user["state"] = "adres"
-            await update.message.reply_text("📍 Önce adres yaz:")
-            return
-
-        if not user["odeme"]:
-            await update.message.reply_text("💳 Önce ödeme seç")
-            return
-
-        user["state"] = "isim"
-        await update.message.reply_text("👤 İsmini yaz:")
+    # 🛒 sepet boş mu
+    if not user["cart"]:
+        await update.message.reply_text("🛒 Sepet boş")
         return
+
+    # 📍 adres yoksa zorla
+    if not user.get("adres"):
+        user["state"] = "adres"
+        await update.message.reply_text("📍 Önce adresini yaz:")
+        return
+
+    # 💳 ödeme yoksa zorla
+    if not user.get("odeme"):
+        await update.message.reply_text("💳 Önce ödeme seç")
+        return
+
+    # 👤 isim iste
+    user["state"] = "isim"
+    await update.message.reply_text("👤 İsmini yaz:")
+    return
 
     # 🔥 DEFAULT
     await update.message.reply_text("👇 Menüden seçim yap", reply_markup=main_menu())
