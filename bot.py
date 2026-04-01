@@ -49,8 +49,9 @@ def payment_menu():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name
+    users[update.effective_user.id] = {}  # reset
     await update.message.reply_text(
-        f"👋 Hoş geldin {name}!\nSipariş vermek için menüyü kullan 👇",
+        f"👋 Hoş geldin {name}!\n\n🍽 Sipariş vermek için menüyü kullan 👇",
         reply_markup=main_menu()
     )
 
@@ -70,10 +71,25 @@ def cart_text(user):
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    text = update.message.text
+    text = update.message.text.strip()
     user = get_user(uid)
 
-    # 🔥 STATE BLOKLARI (EN ÜST)
+    # 🔥 STATE BLOKLARI (EN ÖNEMLİ)
+
+    if user["state"] == "adres":
+        user["adres"] = text
+        user["state"] = None
+        await update.message.reply_text(
+            f"📍 Adres kaydedildi ✅\n🏠 {text}",
+            reply_markup=main_menu()
+        )
+        return
+
+    if user["state"] == "isim":
+        user["isim"] = text
+        user["state"] = "telefon"
+        await update.message.reply_text("📞 Telefon numaranı yaz:")
+        return
 
     if user["state"] == "telefon":
         if not text.isdigit() or len(text) < 10:
@@ -106,34 +122,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users[uid] = {}
         return
 
-    if user["state"] == "isim":
-        user["isim"] = text
-        user["state"] = "telefon"
-        await update.message.reply_text("📞 Telefon numaranı yaz:")
-        return
+    # 🔥 NORMAL AKIŞ
 
- # 🔥 ADRES FIX (SADECE BURAYI DEĞİŞTİR)
-if user.get("state") == "adres":
-    # buton basarsa engelle
-    if text in ["🍔 Menü", "🛒 Sepet", "💳 Ödeme", "✅ Onayla", "❌ İptal"]:
-        await update.message.reply_text("📍 Lütfen adresini yaz (buton değil)")
-        return
-
-    user["adres"] = text
-    user["state"] = None
-
-    await update.message.reply_text(
-        f"📍 Adres kaydedildi ✅\n🏠 {text}",
-        reply_markup=main_menu()
-    )
-    return
-
-    # 🔥 MENÜ
     if text == "🍔 Menü":
         await update.message.reply_text("👇 Ürün seç:", reply_markup=menu_buttons())
         return
 
-    # 🔥 ÜRÜN
     if text in MENU:
         user["cart"].append(text)
         fiyat = MENU[text]
@@ -144,65 +138,51 @@ if user.get("state") == "adres":
         )
         return
 
-    # 🔥 SEPET
     if text == "🛒 Sepet":
         await update.message.reply_text(cart_text(user), reply_markup=main_menu())
         return
 
-    # 🔥 ADRES
     if text == "📍 Adres":
         user["state"] = "adres"
         await update.message.reply_text("📍 Adresini yaz:")
         return
 
-    # 🔥 ÖDEME MENÜ
     if text == "💳 Ödeme":
-        await update.message.reply_text("💳 Ödeme yöntemi seç:", reply_markup=payment_menu())
+        await update.message.reply_text("💳 Ödeme seç:", reply_markup=payment_menu())
         return
 
-    # 🔥 ÖDEME SEÇİMİ
     if text in ["💵 Nakit", "💳 Kapıda Kart", "🏦 IBAN"]:
         user["odeme"] = text
         await update.message.reply_text(f"{text} seçildi ✅", reply_markup=main_menu())
         return
 
-    # 🔥 GERİ
     if text == "🔙 Geri":
         await update.message.reply_text("🔙 Ana menü", reply_markup=main_menu())
         return
 
-    # 🔥 İPTAL
     if text == "❌ İptal":
-        users[uid] = {}
+        users.pop(uid, None)
         await update.message.reply_text("❌ Sipariş iptal edildi", reply_markup=main_menu())
         return
 
-    # 🔥 ONAY
     if text == "✅ Onayla":
-   if text == "✅ Onayla":
+        if not user["cart"]:
+            await update.message.reply_text("🛒 Sepet boş")
+            return
 
-    # 🛒 sepet boş mu
-    if not user["cart"]:
-        await update.message.reply_text("🛒 Sepet boş")
+        if not user["adres"]:
+            user["state"] = "adres"
+            await update.message.reply_text("📍 Önce adres yaz:")
+            return
+
+        if not user["odeme"]:
+            await update.message.reply_text("💳 Önce ödeme seç")
+            return
+
+        user["state"] = "isim"
+        await update.message.reply_text("👤 İsmini yaz:")
         return
 
-    # 📍 adres yoksa zorla
-    if not user.get("adres"):
-        user["state"] = "adres"
-        await update.message.reply_text("📍 Önce adresini yaz:")
-        return
-
-    # 💳 ödeme yoksa zorla
-    if not user.get("odeme"):
-        await update.message.reply_text("💳 Önce ödeme seç")
-        return
-
-    # 👤 isim iste
-    user["state"] = "isim"
-    await update.message.reply_text("👤 İsmini yaz:")
-    return
-
-    # 🔥 DEFAULT
     await update.message.reply_text("👇 Menüden seçim yap", reply_markup=main_menu())
 
 def main():
