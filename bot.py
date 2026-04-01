@@ -21,6 +21,9 @@ from telegram.ext import (
 TOKEN = os.getenv("TOKEN") or "BURAYA_TOKEN"
 ADMIN_ID = int(os.getenv("ADMIN_ID") or "BURAYA_ADMIN_ID")
 
+OPEN = 10
+CLOSE = 23
+
 MENU_ITEMS = {
     "pizza": 150,
     "burger": 120,
@@ -28,14 +31,22 @@ MENU_ITEMS = {
     "kola": 40,
 }
 
+EMOJI = {
+    "pizza": "🍕",
+    "burger": "🍔",
+    "ayran": "🥛",
+    "kola": "🥤",
+}
+
 users = {}
 orders = {}
+campaign_text = None
 
 ANA_MENU = ReplyKeyboardMarkup(
     [
         ["🍔 Menü", "🛒 Sepet"],
         ["📍 Adres", "💳 Ödeme"],
-        ["🔁 Tekrar Sipariş", "🗑️ Son Ürünü Sil"],
+        ["🔁 Tekrar", "🗑️ Sil"],
         ["✅ Onay", "❌ İptal"],
     ],
     resize_keyboard=True
@@ -51,10 +62,7 @@ URUN_MENU = ReplyKeyboardMarkup(
 )
 
 ODEME_MENU = ReplyKeyboardMarkup(
-    [
-        ["Nakit", "Kart"],
-        ["⬅️ Geri"],
-    ],
+    [["Nakit", "Kart"], ["⬅️ Geri"]],
     resize_keyboard=True
 )
 
@@ -69,15 +77,26 @@ def get_user(uid):
             "waiting_name": False,
             "waiting_phone": False,
             "waiting_address": False,
-            "last_order": []
         }
     return users[uid]
 
+def is_open():
+    h = datetime.now().hour
+    return OPEN <= h < CLOSE
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🍔 Hoş geldin!\nSipariş vermek için menüyü kullan 👇",
-        reply_markup=ANA_MENU
-    )
+    name = update.effective_user.first_name
+
+    status = "🟢 Açığız" if is_open() else "🔴 Kapalıyız"
+
+    msg = f"🍔 Hoş geldin {name} 👋\n\n{status} ({OPEN}:00 - {CLOSE}:00)\n\n"
+
+    if campaign_text:
+        msg += f"🔥 Kampanya:\n{campaign_text}\n\n"
+
+    msg += "Sipariş vermek için menüyü kullan 👇"
+
+    await update.message.reply_text(msg, reply_markup=ANA_MENU)
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -86,50 +105,50 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(uid)
 
-    # isim
     if user["waiting_name"]:
         user["name"] = raw
         user["waiting_name"] = False
         user["waiting_phone"] = True
-        await update.message.reply_text("📞 Telefon numaranı yaz:")
+        await update.message.reply_text("📞 Numaran?")
         return
 
-    # telefon
     if user["waiting_phone"]:
         user["phone"] = raw
         user["waiting_phone"] = False
         user["waiting_address"] = True
-        await update.message.reply_text("📍 Adresini yaz:")
+        await update.message.reply_text("📍 Adres?")
         return
 
-    # adres
     if user["waiting_address"]:
         user["address"] = raw
         user["waiting_address"] = False
         await update.message.reply_text("Adres kaydedildi ✅", reply_markup=ANA_MENU)
         return
 
-    if "geri" in text:
-        await update.message.reply_text("Ana menü 👇", reply_markup=ANA_MENU)
-        return
-
     if "menü" in text:
-        await update.message.reply_text("Ürün seç 👇", reply_markup=URUN_MENU)
+        await update.message.reply_text("Ne almak istersin? 😋", reply_markup=URUN_MENU)
         return
 
     if text in MENU_ITEMS:
         user["cart"].append(text)
-        await update.message.reply_text(f"{text} eklendi ✅", reply_markup=URUN_MENU)
+
+        responses = [
+            f"{EMOJI[text]} {text} sepete eklendi 😋",
+            f"{EMOJI[text]} Harika seçim! 🔥",
+            f"{EMOJI[text]} Bunu da ekledim 👌"
+        ]
+
+        total = sum(MENU_ITEMS[i] for i in user["cart"])
+
+        await update.message.reply_text(
+            random.choice(responses) + f"\n💰 Toplam: {total} TL",
+            reply_markup=URUN_MENU
+        )
         return
 
     if "sepet" in text:
-        if not user["cart"]:
-            await update.message.reply_text("Sepet boş")
-            return
         total = sum(MENU_ITEMS[i] for i in user["cart"])
-        await update.message.reply_text(
-            f"{', '.join(user['cart'])}\nToplam: {total} TL"
-        )
+        await update.message.reply_text(f"{user['cart']}\n💰 {total} TL")
         return
 
     if "adres" in text:
@@ -147,10 +166,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if "onay" in text:
-        if not user["cart"]:
-            await update.message.reply_text("Sepet boş")
-            return
-
         if not user["name"]:
             user["waiting_name"] = True
             await update.message.reply_text("İsmini yaz:")
@@ -158,12 +173,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not user["phone"]:
             user["waiting_phone"] = True
-            await update.message.reply_text("Telefonunu yaz:")
+            await update.message.reply_text("Telefon:")
             return
 
         if not user["address"]:
             user["waiting_address"] = True
-            await update.message.reply_text("Adres yaz:")
+            await update.message.reply_text("Adres:")
             return
 
         if not user["payment"]:
@@ -186,43 +201,65 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
         await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"🧾 Sipariş #{order_id}\n👤 {user['name']} - {user['phone']}\n🛒 {', '.join(user['cart'])}\n💰 {total} TL\n📍 {user['address']}",
+            ADMIN_ID,
+            f"""🚨 SİPARİŞ #{order_id}
+
+👤 {user['name']}
+📞 {user['phone']}
+
+🛒 {', '.join(user['cart'])}
+💰 {total} TL
+
+📍 {user['address']}""",
             reply_markup=keyboard
         )
 
-        await update.message.reply_text(f"✅ Sipariş alındı\nNumara: {order_id}")
+        await update.message.reply_text(
+            f"🎉 Sipariş alındı {user['name']}!\n🧾 No: {order_id}"
+        )
 
-        user["last_order"] = list(user["cart"])
         user["cart"] = []
-        return
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
-    data = query.data
+    data = q.data
     order_id = int(data.split("_")[1])
-    user_id = orders.get(order_id)
+    uid = orders.get(order_id)
 
-    if not user_id:
+    if not uid:
         return
 
     if data.startswith("prep"):
         msg = "🍳 Siparişin hazırlanıyor!"
     elif data.startswith("road"):
         msg = "🚗 Siparişin yolda!"
-    elif data.startswith("done"):
-        msg = "✅ Sipariş teslim edildi!"
     else:
-        return
+        msg = "✅ Sipariş teslim edildi!"
 
-    await context.bot.send_message(chat_id=user_id, text=msg)
+    await context.bot.send_message(uid, msg)
+
+# KAMPANYA
+
+async def kampanya(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global campaign_text
+    if update.effective_user.id != ADMIN_ID:
+        return
+    campaign_text = " ".join(context.args)
+    await update.message.reply_text("Kampanya aktif ✅")
+
+async def kampanya_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global campaign_text
+    campaign_text = None
+    await update.message.reply_text("Kampanya kapatıldı ❌")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("kampanya", kampanya))
+    app.add_handler(CommandHandler("kampanya_kapat", kampanya_kapat))
     app.add_handler(MessageHandler(filters.TEXT, handle))
     app.add_handler(CallbackQueryHandler(button_handler))
 
