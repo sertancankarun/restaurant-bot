@@ -5,8 +5,8 @@ import openpyxl
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# TOKEN ve ADMIN
-TOKEN = os.getenv("TOKEN") or "8375997086:AAFQsoQchoyIuHjtoff3Wr5hUeUy4_nVqUY"
+# TOKEN / ADMIN
+TOKEN = os.getenv("TOKEN") or "BURAYA_TOKEN"
 ADMIN_ID = int(os.getenv("ADMIN_ID") or "6741548158")
 
 FILE_NAME = "orders.xlsx"
@@ -69,7 +69,7 @@ def save_order(cart, address, payment):
     wb = openpyxl.load_workbook(FILE_NAME)
     ws = wb.active
 
-    total = sum(MENU_ITEMS[item] for item in cart)
+    total = sum(MENU_ITEMS[i] for i in cart)
     now = datetime.now()
 
     ws.append([
@@ -78,7 +78,7 @@ def save_order(cart, address, payment):
         ", ".join(cart),
         total,
         address,
-        payment,
+        payment
     ])
 
     wb.save(FILE_NAME)
@@ -97,25 +97,37 @@ def get_user(user_id):
 # START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hoş geldin 👋",
+        "Hoş geldin 👋\nSipariş vermek için menüyü kullan 👇",
         reply_markup=ANA_MENU
     )
 
-# MESAJ
+# HANDLE
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text.lower()
+    raw_text = update.message.text
+    text = raw_text.lower()
 
     user = get_user(user_id)
 
-    # adres yazma
-    if user["waiting_address"]:
-        user["address"] = update.message.text
-        user["waiting_address"] = False
-        await update.message.reply_text("Adres kaydedildi ✅", reply_markup=ANA_MENU)
+    # GERİ
+    if "geri" in text:
+        await update.message.reply_text(
+            "Ana menüye döndün 👇",
+            reply_markup=ANA_MENU
+        )
         return
 
-    # iptal
+    # ADRES GİRİŞİ
+    if user["waiting_address"]:
+        user["address"] = raw_text
+        user["waiting_address"] = False
+        await update.message.reply_text(
+            "📍 Adres kaydedildi ✅",
+            reply_markup=ANA_MENU
+        )
+        return
+
+    # İPTAL
     if "iptal" in text:
         users[user_id] = {
             "cart": [],
@@ -123,55 +135,82 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "payment": None,
             "waiting_address": False,
         }
-        await update.message.reply_text("İptal edildi ❌", reply_markup=ANA_MENU)
+        await update.message.reply_text("Sipariş iptal edildi ❌", reply_markup=ANA_MENU)
         return
 
-    # menü
+    # MENÜ
     if "menü" in text:
-        await update.message.reply_text("Ürün seç:", reply_markup=URUN_MENU)
+        await update.message.reply_text(
+            "🍔 Ürün seçebilirsin 👇",
+            reply_markup=URUN_MENU
+        )
         return
 
-    # ürün ekleme
+    # ÜRÜN EKLE
     if text in ["pizza", "burger", "ayran", "kola"]:
         user["cart"].append(text)
-        await update.message.reply_text(f"{text} eklendi ✅", reply_markup=URUN_MENU)
+
+        # upsell
+        extra = ""
+        if text == "pizza":
+            extra = "\nYanına ayran ister misin? 🥤"
+        elif text == "burger":
+            extra = "\nYanına kola ister misin? 🥤"
+
+        await update.message.reply_text(
+            f"🛒 {text.capitalize()} sepete eklendi!{extra}",
+            reply_markup=URUN_MENU
+        )
         return
 
-    # sepet
+    # SEPET
     if "sepet" in text:
         if not user["cart"]:
-            await update.message.reply_text("Sepet boş")
+            await update.message.reply_text("Sepetin boş 😕")
             return
 
         total = sum(MENU_ITEMS[i] for i in user["cart"])
+
         await update.message.reply_text(
-            f"Sepet: {', '.join(user['cart'])}\nToplam: {total} TL",
+            f"🛒 Sepetin:\n{', '.join(user['cart'])}\n\n💰 Toplam: {total} TL",
             reply_markup=ANA_MENU
         )
         return
 
-    # adres
+    # ADRES
     if "adres" in text:
         user["waiting_address"] = True
-        await update.message.reply_text("Adres yaz:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(
+            "📍 Lütfen adresini yaz:",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return
 
-    # ödeme
+    # ÖDEME
     if "ödeme" in text:
-        await update.message.reply_text("Ödeme seç:", reply_markup=ODEME_MENU)
+        await update.message.reply_text(
+            "💳 Ödeme yöntemini seç:",
+            reply_markup=ODEME_MENU
+        )
         return
 
     if text in ["nakit", "kart"]:
         user["payment"] = text
-        await update.message.reply_text(f"{text} seçildi ✅", reply_markup=ANA_MENU)
+        await update.message.reply_text(
+            f"💳 {text.capitalize()} seçildi ✅",
+            reply_markup=ANA_MENU
+        )
         return
 
-    # onay ekranı
-    if text == "onay":
-        await update.message.reply_text("Onaylamak için tıkla", reply_markup=ONAY_MENU)
+    # ONAY EKRANI
+    if "onay" in text and "onayla" not in text:
+        await update.message.reply_text(
+            "Siparişi onaylamak için aşağıya bas 👇",
+            reply_markup=ONAY_MENU
+        )
         return
 
-    # onayla
+    # ONAYLA (ASIL SİPARİŞ)
     if "onayla" in text:
         if not user["cart"]:
             await update.message.reply_text("Sepet boş ❌")
@@ -179,7 +218,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not user["address"]:
             user["waiting_address"] = True
-            await update.message.reply_text("Adres gir ❌", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text("Adres girmen lazım ❌", reply_markup=ReplyKeyboardRemove())
             return
 
         if not user["payment"]:
@@ -188,7 +227,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         total = sum(MENU_ITEMS[i] for i in user["cart"])
 
-        msg = f"Sipariş:\n{', '.join(user['cart'])}\n{total} TL\nAdres: {user['address']}\nÖdeme: {user['payment']}"
+        msg = f"📦 Yeni Sipariş\n\n🛒 {', '.join(user['cart'])}\n💰 {total} TL\n📍 {user['address']}\n💳 {user['payment']}"
 
         await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
 
@@ -201,7 +240,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "waiting_address": False,
         }
 
-        await update.message.reply_text("Sipariş alındı ✅", reply_markup=ANA_MENU)
+        await update.message.reply_text(
+            "Siparişin alındı 🎉",
+            reply_markup=ANA_MENU
+        )
         return
 
 # MAIN
