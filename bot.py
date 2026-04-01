@@ -112,14 +112,21 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📞 Telefon numaranı yaz:")
         return
 
-    if user["state"] == "adres":
-        user["adres"] = text
-        user["state"] = None
-        await update.message.reply_text(
-            f"📍 Adres kaydedildi ✅\n🏠 {text}",
-            reply_markup=main_menu()
-        )
+ # 🔥 ADRES FIX (SADECE BURAYI DEĞİŞTİR)
+if user.get("state") == "adres":
+    # buton basarsa engelle
+    if text in ["🍔 Menü", "🛒 Sepet", "💳 Ödeme", "✅ Onayla", "❌ İptal"]:
+        await update.message.reply_text("📍 Lütfen adresini yaz (buton değil)")
         return
+
+    user["adres"] = text
+    user["state"] = None
+
+    await update.message.reply_text(
+        f"📍 Adres kaydedildi ✅\n🏠 {text}",
+        reply_markup=main_menu()
+    )
+    return
 
     # 🔥 MENÜ
     if text == "🍔 Menü":
