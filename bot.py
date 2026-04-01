@@ -1,205 +1,217 @@
 import os
-import csv
-import random
 from datetime import datetime
-from collections import Counter
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+import openpyxl
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = os.getenv("TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-IBAN = os.getenv("IBAN", "")
-ALICI = os.getenv("ALICI", "RESTORAN ADI")
-ORDERS_FILE = "orders.csv"
+# TOKEN ve ADMIN
+TOKEN = os.getenv("TOKEN") or "8375997086:AAFQsoQchoyIuHjtoff3Wr5hUeUy4_nVqUY"
+ADMIN_ID = int(os.getenv("ADMIN_ID") or "6741548158")
 
-MENU = {
+FILE_NAME = "orders.xlsx"
+
+MENU_ITEMS = {
     "pizza": 150,
     "burger": 120,
-    "wrap": 100,
     "ayran": 30,
     "kola": 40,
 }
 
-EMOJIS = {
-    "pizza": "🍕",
-    "burger": "🍔",
-    "wrap": "🌯",
-    "ayran": "🥛",
-    "kola": "🥤",
-}
+users = {}
 
-UPSELL = {
-    "pizza": "ayran",
-    "burger": "kola",
-    "wrap": "ayran",
-}
+# MENÜLER
+ANA_MENU = ReplyKeyboardMarkup(
+    [
+        ["🍔 Menü", "🛒 Sepet"],
+        ["📍 Adres", "💳 Ödeme"],
+        ["✅ Onay", "❌ İptal"],
+    ],
+    resize_keyboard=True
+)
 
-kullanicilar = {}
+URUN_MENU = ReplyKeyboardMarkup(
+    [
+        ["Pizza", "Burger"],
+        ["Ayran", "Kola"],
+        ["⬅️ Geri", "🛒 Sepet"],
+    ],
+    resize_keyboard=True
+)
 
-def init_user(uid):
-    if uid not in kullanicilar:
-        kullanicilar[uid] = {
-            "cart": [],
-            "address": "",
-            "note": "",
-            "payment": "",
-            "last_order": [],
-            "waiting_address": False,
-            "waiting_note": False,
-        }
+ODEME_MENU = ReplyKeyboardMarkup(
+    [
+        ["Nakit", "Kart"],
+        ["⬅️ Geri"],
+    ],
+    resize_keyboard=True
+)
 
-def reset_flags(uid):
-    kullanicilar[uid]["waiting_address"] = False
-    kullanicilar[uid]["waiting_note"] = False
+ONAY_MENU = ReplyKeyboardMarkup(
+    [
+        ["✅ Onayla", "❌ İptal"],
+        ["⬅️ Geri"],
+    ],
+    resize_keyboard=True
+)
 
-def ensure_orders_file():
-    if not os.path.exists(ORDERS_FILE):
-        with open(ORDERS_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["order_id","timestamp","items","total","address","note","payment"])
+# EXCEL
+def init_excel():
+    try:
+        openpyxl.load_workbook(FILE_NAME)
+    except:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["Tarih", "Saat", "Ürünler", "Toplam", "Adres", "Ödeme"])
+        wb.save(FILE_NAME)
 
-def cart_total(uid):
-    return sum(MENU[i] for i in kullanicilar[uid]["cart"])
+def save_order(cart, address, payment):
+    wb = openpyxl.load_workbook(FILE_NAME)
+    ws = wb.active
 
-def cart_text(uid):
-    cart = kullanicilar[uid]["cart"]
-    if not cart:
-        return "Sepetin boş."
-    text = ""
-    for i in cart:
-        text += f"{EMOJIS[i]} {i} - {MENU[i]} TL\n"
-    return text + f"\n💰 Toplam: {cart_total(uid)} TL"
+    total = sum(MENU_ITEMS[item] for item in cart)
+    now = datetime.now()
 
-def main_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🍔 Menü", callback_data="menu")],
-        [InlineKeyboardButton("⚡ Hızlı Menü", callback_data="quick")],
-        [InlineKeyboardButton("🛒 Sepet", callback_data="cart")],
-        [InlineKeyboardButton("📍 Adres", callback_data="address")],
-        [InlineKeyboardButton("💳 Ödeme", callback_data="payment")],
-        [InlineKeyboardButton("✅ Onayla", callback_data="confirm")],
-        [InlineKeyboardButton("❌ İptal", callback_data="cancel")],
+    ws.append([
+        now.strftime("%Y-%m-%d"),
+        now.strftime("%H:%M"),
+        ", ".join(cart),
+        total,
+        address,
+        payment,
     ])
 
+    wb.save(FILE_NAME)
+
+# USER
+def get_user(user_id):
+    if user_id not in users:
+        users[user_id] = {
+            "cart": [],
+            "address": None,
+            "payment": None,
+            "waiting_address": False,
+        }
+    return users[user_id]
+
+# START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    init_user(uid)
-    await update.message.reply_text("Hoş geldin 😄", reply_markup=main_menu())
+    await update.message.reply_text(
+        "Hoş geldin 👋",
+        reply_markup=ANA_MENU
+    )
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    init_user(uid)
-    user = kullanicilar[uid]
+# MESAJ
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.lower()
 
-    if q.data == "menu":
-        buttons = []
-        for i in MENU:
-            buttons.append([InlineKeyboardButton(f"{i} - {MENU[i]} TL", callback_data=f"add_{i}")])
-        await q.message.reply_text("Menü:", reply_markup=InlineKeyboardMarkup(buttons))
+    user = get_user(user_id)
 
-    elif q.data.startswith("add_"):
-        urun = q.data.split("_")[1]
-        user["cart"].append(urun)
-
-        if urun in UPSELL:
-            oneri = UPSELL[urun]
-            await q.message.reply_text(
-                f"{urun} eklendi. Yanına {oneri} ister misin?",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Evet", callback_data=f"add_{oneri}")],
-                    [InlineKeyboardButton("Hayır", callback_data="cart")]
-                ])
-            )
-        else:
-            await q.message.reply_text("Eklendi", reply_markup=main_menu())
-
-    elif q.data == "cart":
-        await q.message.reply_text(cart_text(uid), reply_markup=main_menu())
-
-    elif q.data == "quick":
-        user["cart"] += ["pizza","ayran"]
-        await q.message.reply_text("Hızlı sipariş eklendi", reply_markup=main_menu())
-
-    elif q.data == "address":
-        user["waiting_address"] = True
-        await q.message.reply_text("Adres yaz")
-
-    elif q.data == "payment":
-        await q.message.reply_text("Ödeme seç", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Nakit", callback_data="cash")],
-            [InlineKeyboardButton("Kart", callback_data="card")],
-            [InlineKeyboardButton("IBAN", callback_data="iban")]
-        ]))
-
-    elif q.data == "cash":
-        user["payment"] = "Nakit"
-
-    elif q.data == "card":
-        user["payment"] = "Kart"
-
-    elif q.data == "iban":
-        user["payment"] = "IBAN"
-        await q.message.reply_text(f"IBAN: {IBAN}")
-
-    elif q.data == "confirm":
-        if not user["cart"]:
-            await q.message.reply_text("Sepet boş")
-            return
-
-        order_id = random.randint(100000,999999)
-        ensure_orders_file()
-
-        with open(ORDERS_FILE,"a",newline="",encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                order_id,
-                datetime.now(),
-                ",".join(user["cart"]),
-                cart_total(uid),
-                user["address"],
-                user["note"],
-                user["payment"]
-            ])
-
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"Yeni sipariş: {user['cart']}"
-        )
-
-        user["cart"] = []
-        await q.message.reply_text("Sipariş alındı")
-
-    elif q.data == "cancel":
-        user["cart"] = []
-        await q.message.reply_text("İptal edildi")
-
-async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    init_user(uid)
-    user = kullanicilar[uid]
-
+    # adres yazma
     if user["waiting_address"]:
         user["address"] = update.message.text
         user["waiting_address"] = False
-        await update.message.reply_text("Adres kaydedildi")
-    else:
-        await update.message.reply_text("Menüden ilerle", reply_markup=main_menu())
+        await update.message.reply_text("Adres kaydedildi ✅", reply_markup=ANA_MENU)
+        return
 
+    # iptal
+    if "iptal" in text:
+        users[user_id] = {
+            "cart": [],
+            "address": user["address"],
+            "payment": None,
+            "waiting_address": False,
+        }
+        await update.message.reply_text("İptal edildi ❌", reply_markup=ANA_MENU)
+        return
+
+    # menü
+    if "menü" in text:
+        await update.message.reply_text("Ürün seç:", reply_markup=URUN_MENU)
+        return
+
+    # ürün ekleme
+    if text in ["pizza", "burger", "ayran", "kola"]:
+        user["cart"].append(text)
+        await update.message.reply_text(f"{text} eklendi ✅", reply_markup=URUN_MENU)
+        return
+
+    # sepet
+    if "sepet" in text:
+        if not user["cart"]:
+            await update.message.reply_text("Sepet boş")
+            return
+
+        total = sum(MENU_ITEMS[i] for i in user["cart"])
+        await update.message.reply_text(
+            f"Sepet: {', '.join(user['cart'])}\nToplam: {total} TL",
+            reply_markup=ANA_MENU
+        )
+        return
+
+    # adres
+    if "adres" in text:
+        user["waiting_address"] = True
+        await update.message.reply_text("Adres yaz:", reply_markup=ReplyKeyboardRemove())
+        return
+
+    # ödeme
+    if "ödeme" in text:
+        await update.message.reply_text("Ödeme seç:", reply_markup=ODEME_MENU)
+        return
+
+    if text in ["nakit", "kart"]:
+        user["payment"] = text
+        await update.message.reply_text(f"{text} seçildi ✅", reply_markup=ANA_MENU)
+        return
+
+    # onay ekranı
+    if text == "onay":
+        await update.message.reply_text("Onaylamak için tıkla", reply_markup=ONAY_MENU)
+        return
+
+    # onayla
+    if "onayla" in text:
+        if not user["cart"]:
+            await update.message.reply_text("Sepet boş ❌")
+            return
+
+        if not user["address"]:
+            user["waiting_address"] = True
+            await update.message.reply_text("Adres gir ❌", reply_markup=ReplyKeyboardRemove())
+            return
+
+        if not user["payment"]:
+            await update.message.reply_text("Ödeme seç ❌", reply_markup=ODEME_MENU)
+            return
+
+        total = sum(MENU_ITEMS[i] for i in user["cart"])
+
+        msg = f"Sipariş:\n{', '.join(user['cart'])}\n{total} TL\nAdres: {user['address']}\nÖdeme: {user['payment']}"
+
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+
+        save_order(user["cart"], user["address"], user["payment"])
+
+        users[user_id] = {
+            "cart": [],
+            "address": user["address"],
+            "payment": None,
+            "waiting_address": False,
+        }
+
+        await update.message.reply_text("Sipariş alındı ✅", reply_markup=ANA_MENU)
+        return
+
+# MAIN
 def main():
+    init_excel()
+
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT, text))
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
     print("Bot çalışıyor...")
     app.run_polling()
