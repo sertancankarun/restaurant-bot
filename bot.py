@@ -96,28 +96,25 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
         if user["state"] == "telefon":
-    global order_counter
+            global order_counter
 
-    if not text.isdigit() or len(text) < 10:
-        await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
-        return
+            if not text.isdigit() or len(text) < 10:
+                await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
+                return
 
-    user["telefon"] = text
-    user["state"] = None
+            user["telefon"] = text
+            user["state"] = None
 
-    order_counter += 1
-    order_id = order_counter
+            order_counter += 1
+            order_id = order_counter
 
-    orders[order_id] = {
-        "user_id": uid,
-        "status": "Hazırlanıyor",
-        "data": user.copy()
-    }
+            orders[order_id] = {
+                "user_id": uid,
+                "status": "Hazırlanıyor",
+                "data": user.copy()
     }
 
     total = sum(MENU[i] for i in user["cart"])
-
-    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
     buttons = InlineKeyboardMarkup([
         [
@@ -285,7 +282,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT, handle))
+    app.app.add_handler(MessageHandler(filters.ALL, handle))
     app.add_handler(CallbackQueryHandler(admin_buttons))
 
     print("Bot çalışıyor...")
