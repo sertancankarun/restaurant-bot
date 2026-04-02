@@ -71,12 +71,13 @@ f"""👋 Hoş geldin {name}!
     )
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global order_counter
+
     uid = update.effective_user.id
     text = update.message.text
     user = get_user(uid)
 
-    # 🔥 STATE ÖNCELİĞİ
-
+    # 📍 ADRES
     if user["state"] == "adres":
         if len(text) < 4:
             await update.message.reply_text("📍 Daha detaylı adres yaz")
@@ -88,6 +89,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📍 Adres kaydedildi ✅\n{text}", reply_markup=main_menu())
         return
 
+    # 👤 İSİM → TELEFON
     if user["state"] == "isim":
         user["isim"] = text
         user["state"] = "telefon"
@@ -95,41 +97,40 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📞 Telefon numaranı yaz:")
         return
 
-        if user["state"] == "telefon":
-            global order_counter
+    # 📞 TELEFON → SİPARİŞ TAMAMLA
+    if user["state"] == "telefon":
 
-            if not text.isdigit() or len(text) < 10:
-                await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
-                return
+        if not text.isdigit() or len(text) < 10:
+            await update.message.reply_text("📞 Geçerli numara yaz (sadece rakam)")
+            return
 
-            user["telefon"] = text
-            user["state"] = None
+        user["telefon"] = text
+        user["state"] = None
 
-            order_counter += 1
-            order_id = order_counter
+        order_counter += 1
+        order_id = order_counter
 
-            orders[order_id] = {
-                "user_id": uid,
-                "status": "Hazırlanıyor",
-                "data": user.copy()
-    }
+        total = sum(MENU[i] for i in user["cart"])
 
-    total = sum(MENU[i] for i in user["cart"])
+        orders[order_id] = {
+            "user_id": uid,
+            "status": "Hazırlanıyor",
+            "data": user.copy()
+        }
 
-    buttons = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("👨‍🍳 Hazırlanıyor", callback_data=f"hazir_{order_id}"),
-            InlineKeyboardButton("🚗 Yolda", callback_data=f"yolda_{order_id}")
-        ],
-        [
-            InlineKeyboardButton("✅ Teslim", callback_data=f"teslim_{order_id}")
-        ]
-    ])
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("👨‍🍳 Hazırlanıyor", callback_data=f"hazir_{order_id}"),
+                InlineKeyboardButton("🚗 Yolda", callback_data=f"yolda_{order_id}")
+            ],
+            [
+                InlineKeyboardButton("✅ Teslim", callback_data=f"teslim_{order_id}")
+            ]
+        ])
 
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"""
-📦 Sipariş #{order_id}
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"""📦 Sipariş #{order_id}
 
 👤 {user['isim']}
 📞 {user['telefon']}
@@ -138,40 +139,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📍 {user['adres']}
 💳 {user['odeme']}
 """,
-        reply_markup=buttons
-    )
+            reply_markup=buttons
+        )
 
-    await update.message.reply_text(
-        f"🎉 Siparişin alındı!\n📦 Sipariş No: {order_id}",
-        reply_markup=main_menu()
-    )
-
-    users.pop(uid, None)
-    return
-        user["telefon"] = text
-        user["state"] = None
-
-        total = sum(MENU[i] for i in user["cart"])
-
-        msg = f"""
-📦 Yeni Sipariş
-
-👤 {user['isim']}
-📞 {user['telefon']}
-🛒 {', '.join(user['cart'])}
-💰 {total} TL
-📍 {user['adres']}
-💳 {user['odeme']}
-"""
-
-        await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
-
-        await update.message.reply_text("🎉 Sipariş alındı! Hazırlanıyor 👨‍🍳", reply_markup=main_menu())
+        await update.message.reply_text(
+            f"🎉 Siparişin alındı!\n📦 Sipariş No: {order_id}",
+            reply_markup=main_menu()
+        )
 
         users.pop(uid, None)
         return
 
-    # 🔥 BUTONLAR
+    # 🔘 BUTONLAR
 
     if text == "🍔 Menü":
         await update.message.reply_text("👇 Ürün seç:", reply_markup=menu_buttons())
@@ -282,7 +261,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.app.add_handler(MessageHandler(filters.ALL, handle))
+    app.add_handler(MessageHandler(filters.ALL, handle))
     app.add_handler(CallbackQueryHandler(admin_buttons))
 
     print("Bot çalışıyor...")
